@@ -94,13 +94,67 @@ impl Coarsener {
         levels
     }
 
-    /// `GroupVertices` with no groups and no fixed vertices: every vertex its own cluster, then
-    /// one contraction — which drops single-vertex and oversized hyperedges and merges parallel
-    /// ones. (Groups and fixed vertices are not used by the callers this crate serves.)
+    /// `GroupVertices` with no groups: see `group_vertices_with`.
     pub fn group_vertices(&self, g: &Hypergraph) -> Hypergraph {
-        assert!(g.fixed_attr_size() == 0, "group_vertices: fixed vertices are not supported");
-        let of: Vec<i64> = (0..g.num_vertices() as i64).collect();
-        self.contraction(g, &of, g.all_vertex_weights().to_vec(), g.copy_community(), g.copy_fixed_attr())
+        self.group_vertices_with(g, &[])
+    }
+
+    /// `GroupVertices` (`ClusterBasedGroupInfo` then one contraction — which drops single-vertex
+    /// and oversized hyperedges and merges parallel ones). With no groups and no fixed vertices
+    /// every vertex is its own cluster. Otherwise: one group per block of its fixed vertices,
+    /// then the given groups, in that order; a group joins the HIGHEST cluster any of its
+    /// vertices is already in (else a new one), the rest become new clusters in vertex order.
+    /// ⚠️ A cluster a later group takes all vertices from stays, EMPTY (weight 0). A cluster's
+    /// community and fixed block are the max of its vertices' (from -1); weights summed in
+    /// vertex order.
+    pub fn group_vertices_with(&self, g: &Hypergraph, groups: &[Vec<usize>]) -> Hypergraph {
+        if groups.is_empty() && g.fixed_attr_size() == 0 {
+            let of: Vec<i64> = (0..g.num_vertices() as i64).collect();
+            return self.contraction(g, &of, g.all_vertex_weights().to_vec(), g.copy_community(), g.copy_fixed_attr());
+        }
+        let mut all: Vec<Vec<usize>> = vec![Vec::new(); self.num_parts];
+        if g.fixed_attr_size() > 0 {
+            for v in 0..g.num_vertices() {
+                if g.fixed_attr(v) > -1 {
+                    all[g.fixed_attr(v) as usize].push(v);
+                }
+            }
+        }
+        all.retain(|grp| !grp.is_empty());
+        all.extend(groups.iter().cloned());
+        let mut of = vec![-1i64; g.num_vertices()];
+        let mut next = 0i64;
+        for grp in &all {
+            let mut cur = grp.iter().map(|&v| of[v]).max().unwrap_or(-1);
+            if cur == -1 {
+                cur = next;
+                next += 1;
+            }
+            for &v in grp {
+                of[v] = cur;
+            }
+        }
+        for c in of.iter_mut() {
+            if *c == -1 {
+                *c = next;
+                next += 1;
+            }
+        }
+        let n = next as usize;
+        let mut weights = vec![vec![0.0f32; g.vertex_dimensions()]; n];
+        let mut community = if g.has_community() { vec![-1; n] } else { Vec::new() };
+        let mut fixed = if g.has_fixed_vertices() { vec![-1; n] } else { Vec::new() };
+        for (v, &cluster) in of.iter().enumerate() {
+            let c = cluster as usize;
+            if g.has_community() {
+                community[c] = community[c].max(g.community(v));
+            }
+            if g.has_fixed_vertices() {
+                fixed[c] = fixed[c].max(g.fixed_attr(v));
+            }
+            weights[c] = add(&weights[c], g.vertex_weights(v));
+        }
+        self.contraction(g, &of, weights, community, fixed)
     }
 
     /// `Aggregate`: one matching pass, then its contraction.
@@ -342,24 +396,23 @@ mod tests {
         assert_eq!(coarsener(50).group_vertices(&g).num_hyperedges(), 2);
     }
 
-    /// In id order, 0 pairs with 1; 2 joins that cluster (the heavier hyperedge); 3 would join it
-    /// too, but the cluster would then exceed the weight limit, so 3 stays alone.
+    /// Groups: a group joins the HIGHEST cluster one of its vertices is in, which can leave an
+    /// earlier cluster EMPTY (weight 0); communities are the max over a cluster's vertices;
+    /// ungrouped vertices follow in vertex order.
     #[test]
-    fn a_vertex_joins_its_best_neighbours_cluster() {
-        let g = Hypergraph::new(
-            1,
-            1,
-            &[vec![0, 1], vec![1, 2], vec![2, 3]],
-            vec![vec![1.0]; 4],
-            vec![vec![1.0], vec![3.0], vec![1.0]],
-            vec![],
-            vec![],
-        );
-        let mut co = coarsener(50);
-        co.coarsening_ratio = 100.0; // no early stop
-        co.thr_cluster_weight = vec![3.0];
-        let c = co.vertex_matching(&g);
-        assert_eq!(c.of, vec![0, 0, 0, 1]);
-        assert_eq!(c.weights, vec![vec![3.0], vec![1.0]]);
+    fn grouping_merges_into_the_highest_cluster() {
+        let mut g = Hypergraph::new(1, 1, &[vec![0, 4], vec![1, 3]], vec![vec![1.0], vec![2.0], vec![4.0], vec![8.0], vec![16.0]], vec![vec![1.0]; 2], vec![], vec![]);
+        g.set_community(vec![3, 1, 0, 2, 5]);
+        // [0,1] -> 0, [2] -> 1, [1,2,3] -> max(0,1) = 1 (cluster 0 keeps only vertex 0), 4 -> 2.
+        let c = coarsener(50).group_vertices_with(&g, &[vec![0, 1], vec![2], vec![1, 2, 3]]);
+        assert_eq!(c.num_vertices(), 3);
+        assert_eq!(c.all_vertex_weights(), &[vec![1.0], vec![14.0], vec![16.0]]);
+        assert_eq!((c.community(0), c.community(1), c.community(2)), (3, 2, 5));
+        assert_eq!(c.vertex_c_attr(1), &[1, 2, 3]);
+        // A cluster emptied entirely stays, weightless: [0] -> 0, [1] -> 1, [0,1] -> 1.
+        let c = coarsener(50).group_vertices_with(&g, &[vec![0], vec![1], vec![0, 1]]);
+        assert_eq!(c.num_vertices(), 5);
+        assert_eq!(c.all_vertex_weights()[0], vec![0.0]);
+        assert_eq!(c.vertex_c_attr(1), &[0, 1]);
     }
 }

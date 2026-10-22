@@ -27,6 +27,17 @@ pub struct InitialPartitions {
     pub best_cost: f32,
 }
 
+impl Kind {
+    /// The reference's trace line for one tried solution.
+    fn line(self, i: usize, cost: f32, flag: bool) -> String {
+        match self {
+            Kind::Random => format!("[initial_partitioning] {i} :: Random part cutcost = {cost}, balance_flag = {flag}"),
+            Kind::RandomVile => format!("[initial_partitioning] {i} :: Random VILE part cutcost = {cost}, balance_flag = {flag}"),
+            Kind::Vile => format!("[initial_partitioning] VILE part cutcost = {cost}, balance_flag = {flag}"),
+        }
+    }
+}
+
 /// Why a stage stopped short of an answer.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Refused {
@@ -46,8 +57,11 @@ pub struct InitialParams {
 
 /// `InitialPartition`. One generator seeded once hands each random start its own seed: first the
 /// balanced random starts, then the vile random ones, then one vile start; the refiner may make
-/// as many moves as there are vertices until after the vile start. Kept: the cheapest solutions
-/// within bounds, ordered by (cost, order made), topped up with the cheapest of the rest.
+/// as many moves as there are vertices until after the vile start (whose line comes AFTER the
+/// refiner's reset lines). Kept: the cheapest solutions within bounds, ordered by (cost, order
+/// made), topped up with the cheapest of the rest. Trace lines go to `trace` in the reference's
+/// order. A graph small enough for the exact (ILP) start is refused before anything is printed
+/// past the opening line.
 pub fn initial_partition(
     p: &InitialParams,
     ev: &Evaluator,
@@ -55,15 +69,17 @@ pub fn initial_partition(
     g: &Hypergraph,
     upper: &[Weights],
     lower: &[Weights],
+    trace: &mut Vec<String>,
 ) -> Result<InitialPartitions, Refused> {
+    trace.push("[initial_partitioning] Running Initial Partitioning...".into());
     if g.num_vertices() <= p.num_vertices_threshold_ilp {
         return Err(Refused::NeedsIlp { num_vertices: g.num_vertices() });
     }
     let mut gen = Mt19937::new(p.seed as u32);
     let mut solutions: Vec<Vec<usize>> = Vec::new();
     let mut tried = Vec::new();
-    fm.max_move = g.num_vertices();
-    let mut run = |solution: Vec<usize>, fm: &KWayFm, kind: Kind, i: usize, solutions: &mut Vec<Vec<usize>>| {
+    fm.set_max_move(g.num_vertices(), trace);
+    let run = |solution: Vec<usize>, fm: &KWayFm, tried: &mut Vec<(Kind, usize, f32, bool)>, kind: Kind, i: usize, solutions: &mut Vec<Vec<usize>>| {
         let mut solution = solution;
         fm.refine(g, upper, lower, &mut solution);
         let (cost, balance) = ev.cut_evaluator(g, &solution);
@@ -74,11 +90,18 @@ pub fn initial_partition(
     for (kind, vile) in [(Kind::Random, false), (Kind::RandomVile, true)] {
         for i in 0..p.num_initial_random_solutions {
             let seed = (gen.next_u32() & i32::MAX as u32) as i32;
-            run(random_part(g, p.num_parts, upper, lower, seed, vile), fm, kind, i, &mut solutions);
+            run(random_part(g, p.num_parts, upper, lower, seed, vile), fm, &mut tried, kind, i, &mut solutions);
+            let &(k, i, cost, flag) = tried.last().expect("just tried");
+            trace.push(k.line(i, cost, flag));
         }
     }
-    run(vile_part(g, p.num_parts, ev), fm, Kind::Vile, 0, &mut solutions);
-    fm.restore_default_parameters();
+    let mut vile_solution = vile_part(g, p.num_parts, ev);
+    fm.refine(g, upper, lower, &mut vile_solution);
+    fm.restore_default_parameters(trace);
+    let (cost, balance) = ev.cut_evaluator(g, &vile_solution);
+    tried.push((Kind::Vile, 0, cost, blocks_le(&balance, upper)));
+    solutions.push(vile_solution);
+    trace.push(Kind::Vile.line(0, cost, tried.last().expect("just tried").3));
 
     let mut ids: Vec<usize> = (0..tried.len()).collect();
     ids.sort_by(|&x, &y| tried[x].2.partial_cmp(&tried[y].2).expect("finite cost").then(x.cmp(&y)));
@@ -106,22 +129,7 @@ pub fn initial_partition(
             chosen[id] = true;
         }
     }
+    trace.push(format!("[initial_partitioning] Number of chosen best initial solutions = {}", top.len()));
+    trace.push(format!("[initial_partitioning] Best initial cutcost {best_cost}"));
     Ok(InitialPartitions { tried, top, best_cost })
-}
-
-impl InitialPartitions {
-    /// The reference's trace lines for this stage, in its words.
-    pub fn trace(&self) -> Vec<String> {
-        let mut lines = vec!["Running Initial Partitioning...".to_string()];
-        for &(kind, i, cost, flag) in &self.tried {
-            lines.push(match kind {
-                Kind::Random => format!("{i} :: Random part cutcost = {cost}, balance_flag = {flag}"),
-                Kind::RandomVile => format!("{i} :: Random VILE part cutcost = {cost}, balance_flag = {flag}"),
-                Kind::Vile => format!("VILE part cutcost = {cost}, balance_flag = {flag}"),
-            });
-        }
-        lines.push(format!("Number of chosen best initial solutions = {}", self.top.len()));
-        lines.push(format!("Best initial cutcost {}", self.best_cost));
-        lines
-    }
 }

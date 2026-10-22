@@ -154,9 +154,18 @@ impl KWayFm {
         }
     }
 
-    pub fn restore_default_parameters(&mut self) {
+    /// `SetMaxMove`, with its trace line.
+    pub fn set_max_move(&mut self, max_move: usize, trace: &mut Vec<String>) {
+        trace.push(format!("[refinement] Set the max_move to {max_move}"));
+        self.max_move = max_move;
+    }
+
+    /// `RestoreDefaultParameters`, with its trace lines.
+    pub fn restore_default_parameters(&mut self, trace: &mut Vec<String>) {
         self.max_move = self.max_move_default;
         self.refiner_iters = self.refiner_iters_default;
+        trace.push(format!("[refinement] Reset the max_move to {}", self.max_move));
+        trace.push(format!("[refinement] Reset the refiner_iters to {}", self.refiner_iters));
     }
 
     /// `Refine`: up to `refiner_iters` passes, stopping at the first that gains nothing.

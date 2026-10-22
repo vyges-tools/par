@@ -10,6 +10,7 @@ pub mod evaluator;
 pub mod hypergraph;
 pub mod initial;
 pub mod mt19937;
+pub mod multilevel;
 pub mod partitioner;
 pub mod priority_queue;
 pub mod refinement;
@@ -19,8 +20,8 @@ pub mod shuffle;
 use coarsener::{CoarsenOrder, Coarsener};
 use evaluator::Evaluator;
 use hypergraph::{divide_factor, Hypergraph, Weights};
-use initial::{initial_partition, InitialParams, InitialPartitions, Refused};
-use refinement::{refine_partition, Refiners};
+use initial::InitialParams;
+use refinement::Refiners;
 use refiner::{Greedy, KWayFm, KWayPm};
 
 /// The partitioner's parameters.
@@ -47,6 +48,8 @@ pub struct Params {
     pub refiner_iters: usize,
     pub max_moves: usize,
     pub total_corking_passes: usize,
+    pub v_cycle: bool,
+    pub max_num_vcycle: usize,
 }
 
 impl Params {
@@ -72,6 +75,8 @@ impl Params {
             refiner_iters: 2,
             max_moves: 50,
             total_corking_passes: 25,
+            v_cycle: true,
+            max_num_vcycle: 5,
         }
     }
 
@@ -152,50 +157,4 @@ pub fn simple_hypergraph(hyperedges: &[Vec<usize>], vertex_weights: &[f32], hype
         Vec::new(),
         Vec::new(),
     )
-}
-
-/// One candidate's stages so far: its levels (level 0 = the grouped graph, then each coarser one,
-/// as (vertices, hyperedges)), the initial partitions of its coarsest graph, and the refinement
-/// trace back up to the grouped graph with the solutions it ends with.
-pub struct Candidate {
-    pub levels: Vec<(usize, usize)>,
-    pub initial: Result<InitialPartitions, Refused>,
-    pub refinement: Vec<String>,
-    pub top: Vec<Vec<usize>>,
-    pub best_solution_id: usize,
-}
-
-/// The first `num_coarsen_solutions` candidates: each coarsens the grouped graph with the next
-/// seed, then partitions its coarsest level. The refiner is one object across candidates, as in
-/// the reference. Checkable before any later stage exists.
-pub fn candidates(p: &Params, original: &Hypergraph) -> Vec<Candidate> {
-    let (upper, lower) = p.block_bounds(original);
-    let mut co = p.coarsener(original);
-    co.thr_coarsen_hyperedge_size_skip = p.global_net_threshold;
-    let grouped = co.group_vertices(original);
-    co.thr_coarsen_hyperedge_size_skip = p.thr_coarsen_hyperedge_size_skip;
-    let ev = p.evaluator();
-    let mut refiners = p.refiners(p.k_way_fm());
-    (0..p.num_coarsen_solutions)
-        .map(|_| {
-            co.increase_random_seed();
-            let levels = co.lazy_first_choice(&grouped);
-            let hierarchy: Vec<&Hypergraph> = std::iter::once(&grouped).chain(&levels).collect();
-            let coarsest = *hierarchy.last().expect("level 0");
-            let initial = initial_partition(&p.initial_params(), &ev, &mut refiners.fm, coarsest, &upper, &lower);
-            let (mut top, mut best_solution_id, mut refinement) = (Vec::new(), 0, Vec::new());
-            if let Ok(ip) = &initial {
-                top = ip.top.clone();
-                refinement =
-                    refine_partition(&hierarchy, p.num_parts, &ev, &refiners, &upper, &lower, &mut top, &mut best_solution_id);
-            }
-            Candidate {
-                levels: hierarchy.iter().map(|g| (g.num_vertices(), g.num_hyperedges())).collect(),
-                initial,
-                refinement,
-                top,
-                best_solution_id,
-            }
-        })
-        .collect()
 }

@@ -27,8 +27,8 @@ impl Refiners {
 /// `RefinePartition` over `hierarchy` (finest first). From the coarsest up, every solution is
 /// projected onto the next finer graph (each cluster's block given to the vertices it was made
 /// of) and refined; the reference refines them in parallel, each on its own solution with
-/// read-only refiners, so in turn is the same. The best is the FIRST of the lowest cost. Returns
-/// the per-level trace lines.
+/// read-only refiners, so in turn is the same. The best is the FIRST of the lowest cost. One
+/// trace line per level.
 #[allow(clippy::too_many_arguments)]
 pub fn refine_partition(
     hierarchy: &[&Hypergraph],
@@ -39,8 +39,8 @@ pub fn refine_partition(
     lower: &[Weights],
     top: &mut [Vec<usize>],
     best_solution_id: &mut usize,
-) -> Vec<String> {
-    let mut lines = Vec::new();
+    trace: &mut Vec<String>,
+) {
     for (num_level, pair) in hierarchy.windows(2).rev().enumerate() {
         let (g, coarse) = (pair[0], pair[1]);
         for solution in top.iter_mut() {
@@ -61,8 +61,8 @@ pub fn refine_partition(
                 *best_solution_id = i;
             }
         }
-        lines.push(format!(
-            "Level {} :: num_vertices = {}, num_hyperedges = {}, cutcost = {}, best_solution_id = {}",
+        trace.push(format!(
+            "[refinement] Level {} :: num_vertices = {}, num_hyperedges = {}, cutcost = {}, best_solution_id = {}",
             num_level + 1,
             g.num_vertices(),
             g.num_hyperedges(),
@@ -70,7 +70,6 @@ pub fn refine_partition(
             best_solution_id
         ));
     }
-    lines
 }
 
 #[cfg(test)]

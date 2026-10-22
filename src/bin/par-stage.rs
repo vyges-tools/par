@@ -1,17 +1,17 @@
 // SPDX-License-Identifier: Apache-2.0
-//! Runs the implemented stages on recorded partitioning calls and prints their trace lines.
+//! Runs the partitioner on recorded partitioning calls and prints its trace.
 //!
 //! Input: one JSON object per line — `num_parts`, `balance`, `seed`, `hyperedges`,
 //! `vertex_weights`, `hyperedge_weights` (a `solution` field, if present, is ignored).
-//! Output, per call: `call N` then, per candidate coarsening, its levels as
-//! `Level L :: num_vertices = V, num_hyperedges = E`, then its initial-partitioning trace lines
-//! (`initial …`) and refinement trace lines (`refinement …`).
+//! Output, per call: `call N`, the trace lines (`[group] text`), then `result solved` or
+//! `result refused <why>` — a refused call's trace stops where the refused stage would start.
 //!
 //! Usage: par-stage <calls.jsonl>
 
 use std::io::{BufRead, BufReader};
 
-use vyges_par::{candidates, simple_hypergraph, Params};
+use vyges_par::multilevel::multilevel_partition;
+use vyges_par::{simple_hypergraph, Params};
 
 fn main() {
     let path = std::env::args().nth(1).unwrap_or_else(|| {
@@ -42,16 +42,11 @@ fn main() {
             call["seed"].as_i64().expect("seed") as i32,
         );
         println!("call {}", n + 1);
-        for c in candidates(&p, &g) {
-            println!("coarsening");
-            for (l, (nv, ne)) in c.levels.iter().enumerate() {
-                println!("Level {l} :: num_vertices = {nv}, num_hyperedges = {ne}");
-            }
-            match c.initial {
-                Ok(ip) => ip.trace().iter().for_each(|l| println!("initial {l}")),
-                Err(r) => println!("initial refused {r:?}"),
-            }
-            c.refinement.iter().for_each(|l| println!("refinement {l}"));
+        let (result, trace) = multilevel_partition(&p, &g);
+        trace.iter().for_each(|l| println!("{l}"));
+        match result {
+            Ok(_) => println!("result solved"),
+            Err(r) => println!("result refused {r:?}"),
         }
     }
 }
