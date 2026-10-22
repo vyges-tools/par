@@ -4,7 +4,8 @@
 //! Input: one JSON object per line — `num_parts`, `balance`, `seed`, `hyperedges`,
 //! `vertex_weights`, `hyperedge_weights` (a `solution` field, if present, is ignored).
 //! Output, per call: `call N` then, per candidate coarsening, its levels as
-//! `Level L :: num_vertices = V, num_hyperedges = E`, then its initial-partitioning trace lines.
+//! `Level L :: num_vertices = V, num_hyperedges = E`, then its initial-partitioning trace lines
+//! (`initial …`) and refinement trace lines (`refinement …`).
 //!
 //! Usage: par-stage <calls.jsonl>
 
@@ -50,6 +51,7 @@ fn main() {
                 Ok(ip) => ip.trace().iter().for_each(|l| println!("initial {l}")),
                 Err(r) => println!("initial refused {r:?}"),
             }
+            c.refinement.iter().for_each(|l| println!("refinement {l}"));
         }
     }
 }

@@ -2,6 +2,8 @@
 //! The cost model, without timing or placement terms: weight factors per hyperedge and vertex
 //! dimension.
 
+use std::collections::BTreeMap;
+
 use crate::hypergraph::{add, Hypergraph, Weights};
 
 #[derive(Clone, Debug)]
@@ -72,6 +74,35 @@ impl Evaluator {
                 None => false,
             })
             .collect()
+    }
+
+    /// `CalculateHyperedgeVertexWtSum`: the weighted weights of a hyperedge's vertices, summed in
+    /// float in its vertex order.
+    pub fn hyperedge_vertex_wt_sum(&self, e: usize, g: &Hypergraph) -> f32 {
+        let mut weight = 0.0f32;
+        for &v in g.vertices(e) {
+            weight += self.vertex_weight_norm(v, g);
+        }
+        weight
+    }
+
+    /// `GetMatchingConnectivity`: for EVERY block pair a < b (zero included), the cost of the
+    /// hyperedges touching both, summed in float in hyperedge order. A `std::map` ⟹ pair order.
+    pub fn matching_connectivity(&self, g: &Hypergraph, solution: &[usize]) -> BTreeMap<(usize, usize), f32> {
+        let mut out = BTreeMap::new();
+        for a in 0..self.num_parts {
+            for b in a + 1..self.num_parts {
+                let mut score = 0.0f32;
+                for e in 0..g.num_hyperedges() {
+                    let touches = |p: usize| g.vertices(e).iter().any(|&v| solution[v] == p);
+                    if touches(a) && touches(b) {
+                        score += self.hyperedge_cost(e, g);
+                    }
+                }
+                out.insert((a, b), score);
+            }
+        }
+        out
     }
 
     /// `CutEvaluator` (no timing): the cut cost, summed in float in hyperedge order, and the block

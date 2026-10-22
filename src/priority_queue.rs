@@ -51,6 +51,12 @@ impl PriorityQueue {
     pub fn contains(&self, v: usize) -> bool {
         self.map[v] > -1
     }
+    /// `Clear`: empty and inactive.
+    pub fn clear(&mut self) {
+        self.active = false;
+        self.vertices.clear();
+        self.map.fill(-1);
+    }
     pub fn get_max(&self) -> VertexGain {
         self.vertices[0]
     }
