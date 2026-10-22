@@ -185,6 +185,41 @@ pub fn divide_factor(a: &[f32], factor: f32) -> Weights {
     a.iter().map(|x| x / factor).collect()
 }
 
+/// Element-wise `a - b`.
+pub fn sub(a: &[f32], b: &[f32]) -> Weights {
+    a.iter().zip(b).map(|(x, y)| x - y).collect()
+}
+
+/// The partitioner's own `a < b` on weight vectors: EVERY dimension strictly less. It is the one
+/// found for `<` inside the partitioner; `<=`, `>` and `>=` have no own version and are the
+/// standard library's lexicographic ones.
+/// Written as the reference's "stop at the first `a >= b`", so a NaN does not stop it.
+#[allow(clippy::neg_cmp_op_on_partial_ord)]
+pub fn all_less(a: &[f32], b: &[f32]) -> bool {
+    a.iter().zip(b).all(|(x, y)| !(x >= y))
+}
+
+/// The standard library's lexicographic `a < b`.
+pub fn lex_less(a: &[f32], b: &[f32]) -> bool {
+    lex_greater(b, a)
+}
+
+/// The standard library's lexicographic `a <= b`.
+pub fn lex_le(a: &[f32], b: &[f32]) -> bool {
+    !lex_greater(a, b)
+}
+
+/// The standard library's lexicographic `a >= b`.
+pub fn lex_ge(a: &[f32], b: &[f32]) -> bool {
+    !lex_less(a, b)
+}
+
+/// The partitioner's `a <= b` on per-block weights: every block (up to the shorter list) is
+/// all-less (`all_less`) or equal.
+pub fn blocks_le(a: &[Weights], b: &[Weights]) -> bool {
+    a.iter().zip(b).all(|(x, y)| all_less(x, y) || x == y)
+}
+
 /// `a > b` on weight vectors is the standard library's LEXICOGRAPHIC comparison (the partitioner
 /// defines no `>` of its own): the first dimension where they differ decides.
 pub fn lex_greater(a: &[f32], b: &[f32]) -> bool {
@@ -233,6 +268,17 @@ mod tests {
         let g = tiny();
         assert_eq!(g.upper_vertex_balance(2, 1.0, &[0.5, 0.5]), vec![vec![4.0 * 0.51f32]; 2]);
         assert_eq!(g.lower_vertex_balance(2, 1.0, &[0.5, 0.5]), vec![vec![4.0 * 0.49f32]; 2]);
+    }
+
+    /// The partitioner's `<` needs EVERY dimension less; the standard one only the first that
+    /// differs.
+    #[test]
+    fn all_less_is_not_lexicographic() {
+        assert!(!all_less(&[1.0, 9.0], &[2.0, 0.0]));
+        assert!(lex_less(&[1.0, 9.0], &[2.0, 0.0]));
+        assert!(all_less(&[1.0, 0.0], &[2.0, 1.0]));
+        assert!(blocks_le(&[vec![1.0, 0.0], vec![3.0, 3.0]], &[vec![2.0, 1.0], vec![3.0, 3.0]]));
+        assert!(!blocks_le(&[vec![1.0, 2.0]], &[vec![2.0, 1.0]]));
     }
 
     /// Lexicographic: the first differing dimension decides, later ones do not matter.

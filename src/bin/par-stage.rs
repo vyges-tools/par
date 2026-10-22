@@ -4,13 +4,13 @@
 //! Input: one JSON object per line — `num_parts`, `balance`, `seed`, `hyperedges`,
 //! `vertex_weights`, `hyperedge_weights` (a `solution` field, if present, is ignored).
 //! Output, per call: `call N` then, per candidate coarsening, its levels as
-//! `Level L :: num_vertices = V, num_hyperedges = E`.
+//! `Level L :: num_vertices = V, num_hyperedges = E`, then its initial-partitioning trace lines.
 //!
 //! Usage: par-stage <calls.jsonl>
 
 use std::io::{BufRead, BufReader};
 
-use vyges_par::{candidate_coarsenings, simple_hypergraph, Params};
+use vyges_par::{candidates, simple_hypergraph, Params};
 
 fn main() {
     let path = std::env::args().nth(1).unwrap_or_else(|| {
@@ -41,10 +41,14 @@ fn main() {
             call["seed"].as_i64().expect("seed") as i32,
         );
         println!("call {}", n + 1);
-        for levels in candidate_coarsenings(&p, &g) {
+        for c in candidates(&p, &g) {
             println!("coarsening");
-            for (l, (nv, ne)) in levels.iter().enumerate() {
+            for (l, (nv, ne)) in c.levels.iter().enumerate() {
                 println!("Level {l} :: num_vertices = {nv}, num_hyperedges = {ne}");
+            }
+            match c.initial {
+                Ok(ip) => ip.trace().iter().for_each(|l| println!("initial {l}")),
+                Err(r) => println!("initial refused {r:?}"),
             }
         }
     }

@@ -2,7 +2,7 @@
 //! The cost model, without timing or placement terms: weight factors per hyperedge and vertex
 //! dimension.
 
-use crate::hypergraph::Hypergraph;
+use crate::hypergraph::{add, Hypergraph, Weights};
 
 #[derive(Clone, Debug)]
 pub struct Evaluator {
@@ -41,6 +41,49 @@ impl Evaluator {
     pub fn vertex_weight_norm(&self, v: usize, g: &Hypergraph) -> f32 {
         inner_product_f32(g.vertex_weights(v), &self.v_wt_factors)
     }
+
+    /// `GetNetDegrees`: per hyperedge, how many of its vertices each block holds.
+    pub fn net_degrees(&self, g: &Hypergraph, solution: &[usize]) -> Vec<Vec<i32>> {
+        (0..g.num_hyperedges())
+            .map(|e| {
+                let mut degs = vec![0; self.num_parts];
+                for &v in g.vertices(e) {
+                    degs[solution[v]] += 1;
+                }
+                degs
+            })
+            .collect()
+    }
+
+    /// `GetBlockBalance`: per block, the weight of its vertices summed in vertex order.
+    pub fn block_balance(&self, g: &Hypergraph, solution: &[usize]) -> Vec<Weights> {
+        let mut balance = vec![vec![0.0f32; g.vertex_dimensions()]; self.num_parts];
+        for v in 0..g.num_vertices() {
+            balance[solution[v]] = add(&balance[solution[v]], g.vertex_weights(v));
+        }
+        balance
+    }
+
+    /// `GetCutHyperedges`: the hyperedges with a vertex outside the first vertex's block, in order.
+    pub fn cut_hyperedges(&self, g: &Hypergraph, solution: &[usize]) -> Vec<usize> {
+        (0..g.num_hyperedges())
+            .filter(|&e| match g.vertices(e).split_first() {
+                Some((&first, rest)) => rest.iter().any(|&v| solution[v] != solution[first]),
+                None => false,
+            })
+            .collect()
+    }
+
+    /// `CutEvaluator` (no timing): the cut cost, summed in float in hyperedge order, and the block
+    /// balance.
+    pub fn cut_evaluator(&self, g: &Hypergraph, solution: &[usize]) -> (f32, Vec<Weights>) {
+        let balance = self.block_balance(g, solution);
+        let mut edge_cost = 0.0f32;
+        for e in self.cut_hyperedges(g, solution) {
+            edge_cost += self.hyperedge_cost(e, g);
+        }
+        (edge_cost, balance)
+    }
 }
 
 #[cfg(test)]
@@ -54,5 +97,16 @@ mod tests {
         let ev = Evaluator { num_parts: 2, e_wt_factors: vec![1.0], v_wt_factors: vec![1.0] };
         assert_eq!(ev.norm_edge_score(0, &g), 1.5);
         assert_eq!(ev.norm_edge_score(1, &g), 0.0);
+    }
+
+    /// A hyperedge is cut when any vertex leaves its FIRST vertex's block; its cost counts once.
+    #[test]
+    fn the_cut_counts_each_split_hyperedge_once() {
+        let g = Hypergraph::new(1, 1, &[vec![0, 1, 2], vec![1, 2], vec![2]], vec![vec![1.0], vec![2.0], vec![4.0]], vec![vec![3.0], vec![5.0], vec![7.0]], vec![], vec![]);
+        let ev = Evaluator { num_parts: 2, e_wt_factors: vec![1.0], v_wt_factors: vec![1.0] };
+        let (cost, balance) = ev.cut_evaluator(&g, &[0, 1, 1]);
+        assert_eq!(cost, 3.0);
+        assert_eq!(balance, vec![vec![1.0], vec![6.0]]);
+        assert_eq!(ev.net_degrees(&g, &[0, 1, 1]), vec![vec![1, 2], vec![0, 2], vec![0, 1]]);
     }
 }
