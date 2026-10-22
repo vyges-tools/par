@@ -11,9 +11,13 @@ repository = "https://github.com/vyges-tools/par"
 [features]
 # The stage tools that read partitioning calls as JSON lines.
 cli = ["dep:serde_json"]
+# The exact (ILP) partition through the pinned solver library (Linux build). Without it the stages
+# that need an exact solve are refused.
+ilp = ["dep:vyges-ortools-lib"]
 
 [dependencies]
 serde_json = { version = "1", optional = true }
+vyges-ortools-lib = { path = "../vyges-tools-ortools-lib", optional = true }
 
 [lib]
 name = "vyges_par"

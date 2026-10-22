@@ -9,6 +9,7 @@ use crate::coarsener::Coarsener;
 use crate::evaluator::Evaluator;
 use crate::hypergraph::{Hypergraph, Weights};
 use crate::initial::{initial_partition, Refused};
+use crate::partitioner::ilp_part;
 use crate::refinement::{refine_partition, Refiners};
 use crate::Params;
 
@@ -19,6 +20,8 @@ pub struct Multilevel {
     pub refiners: Refiners,
     pub upper: Vec<Weights>,
     pub lower: Vec<Weights>,
+    /// The partitioner's seed: the call's, until a random start sets it.
+    pub partitioner_seed: i32,
     pub trace: Vec<String>,
 }
 
@@ -56,6 +59,7 @@ impl Multilevel {
             refiners: p.refiners(p.k_way_fm()),
             upper,
             lower,
+            partitioner_seed: p.seed,
             trace: vec![
                 "[multilevel_partitioning] Starting multilevel partitioning.".into(),
                 "[multilevel_partitioning] no base balance is specified. Use default value.".into(),
@@ -123,6 +127,7 @@ impl Multilevel {
             coarsest,
             &self.upper,
             &self.lower,
+            &mut self.partitioner_seed,
             &mut self.trace,
         )?;
         let mut top = ip.top;
@@ -148,15 +153,16 @@ impl Multilevel {
     }
 
     /// `SingleCycleRefinement`: coarsen (within communities), take the coarsest graph's
-    /// communities as its solution, refine back up.
+    /// communities as its solution — replaced by the exact partition when that graph is small —
+    /// and refine back up.
     fn single_cycle_refinement(&mut self, g: &Hypergraph) -> Result<Vec<usize>, Refused> {
         let levels = self.lazy_first_choice(g);
         let hierarchy: Vec<&Hypergraph> = std::iter::once(g).chain(&levels).collect();
         let coarsest = *hierarchy.last().expect("level 0");
-        if coarsest.num_vertices() <= self.p.num_vertices_threshold_ilp {
-            return Err(Refused::NeedsIlp { num_vertices: coarsest.num_vertices() });
-        }
         let mut top = vec![coarsest.copy_community().iter().map(|&c| c as usize).collect::<Vec<usize>>()];
+        if coarsest.num_vertices() <= self.p.num_vertices_threshold_ilp {
+            self.ilp(coarsest, &mut top[0])?;
+        }
         let mut best_id = 0;
         self.refine_partition(&hierarchy, &mut top, &mut best_id);
         Ok(top.swap_remove(best_id))
@@ -216,11 +222,14 @@ impl Multilevel {
             clustered.num_vertices(),
             clustered.num_hyperedges()
         ));
-        if num_clusters <= self.p.num_vertices_threshold_ilp {
-            return Err(Refused::NeedsIlp { num_vertices: num_clusters });
-        }
-        clustered.set_community(init_solution.iter().map(|&b| b as i32).collect());
-        let solution = self.single_cycle_refinement(&clustered)?;
+        let solution = if num_clusters <= self.p.num_vertices_threshold_ilp {
+            let mut s = init_solution;
+            self.ilp(&clustered, &mut s)?;
+            s
+        } else {
+            clustered.set_community(init_solution.iter().map(|&b| b as i32).collect());
+            self.single_cycle_refinement(&clustered)?
+        };
         for (c, &part) in solution.iter().enumerate().take(clustered.num_vertices()) {
             for &v in clustered.vertex_c_attr(c) {
                 optimal[v] = part;
@@ -238,6 +247,10 @@ impl Multilevel {
             self.trace.push(format!("[coarsening] Level {l} :: num_vertices = {}, num_hyperedges = {}", h.num_vertices(), h.num_hyperedges()));
         }
         levels
+    }
+
+    fn ilp(&mut self, g: &Hypergraph, solution: &mut Vec<usize>) -> Result<(), Refused> {
+        ilp_part(g, self.p.num_parts, &self.ev, &self.upper, &self.lower, self.partitioner_seed, solution, &mut self.trace)
     }
 
     fn refine_partition(&mut self, hierarchy: &[&Hypergraph], top: &mut [Vec<usize>], best_id: &mut usize) {

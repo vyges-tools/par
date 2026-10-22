@@ -4,6 +4,8 @@
 
 use crate::evaluator::Evaluator;
 use crate::hypergraph::{add, lex_ge, Hypergraph, Weights};
+use crate::ilp::{ilp_partition_inst, IlpInstance, IlpOutcome};
+use crate::initial::Refused;
 use crate::mt19937::Mt19937;
 use crate::shuffle::deterministic_shuffle;
 
@@ -59,6 +61,54 @@ pub fn random_part(
         }
     }
     solution
+}
+
+/// `ILPPart` (every hyperedge used — the default): the exact partition of `g`, replacing
+/// `solution`. When the solver gives no optimum, a balanced random partition with the
+/// partitioner's CURRENT seed (the last one a random start set) replaces it instead. Refused when
+/// built without the solver (before its trace lines, which the reference prints first), or when
+/// a vertex comes back in no block (the reference would index with -1).
+#[allow(clippy::too_many_arguments)]
+pub fn ilp_part(
+    g: &Hypergraph,
+    num_parts: usize,
+    ev: &Evaluator,
+    upper: &[Weights],
+    lower: &[Weights],
+    seed: i32,
+    solution: &mut Vec<usize>,
+    trace: &mut Vec<String>,
+) -> Result<(), Refused> {
+    if !cfg!(feature = "ilp") {
+        return Err(Refused::NeedsIlp { num_vertices: g.num_vertices() });
+    }
+    trace.push("[partitioning] Starting Optimal ILP-based Partitioning".into());
+    trace.push("[partitioning] All the hyperedges will be used in the ILP-based partitioning!".into());
+    let hyperedges: Vec<Vec<usize>> = (0..g.num_hyperedges()).map(|e| g.vertices(e).to_vec()).collect();
+    let hyperedge_weights: Vec<f32> = (0..g.num_hyperedges()).map(|e| ev.hyperedge_cost(e, g)).collect();
+    let inst = IlpInstance {
+        num_parts,
+        vertex_weight_dimension: g.vertex_dimensions(),
+        hyperedges: &hyperedges,
+        hyperedge_weights: &hyperedge_weights,
+        vertex_weights: g.all_vertex_weights(),
+        upper,
+        lower,
+    };
+    match ilp_partition_inst(&inst) {
+        Ok(parts) => {
+            if parts.iter().any(|&b| b < 0) {
+                return Err(Refused::IlpVertexUnassigned);
+            }
+            *solution = parts.into_iter().map(|b| b as usize).collect();
+        }
+        Err(IlpOutcome::NotSolved) => {
+            trace.push("[partitioning] Optimal ILP-based Partitioning failed. Calling random partitioning.".into());
+            *solution = random_part(g, num_parts, upper, lower, seed, false);
+        }
+        Err(IlpOutcome::Unavailable) => return Err(Refused::NeedsIlp { num_vertices: g.num_vertices() }),
+    }
+    Ok(())
 }
 
 /// `VilePart`: free vertices sorted by (weight, id), dealt out round robin.

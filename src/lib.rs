@@ -8,6 +8,7 @@
 pub mod coarsener;
 pub mod evaluator;
 pub mod hypergraph;
+pub mod ilp;
 pub mod initial;
 pub mod mt19937;
 pub mod multilevel;

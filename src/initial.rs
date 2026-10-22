@@ -5,7 +5,7 @@
 use crate::evaluator::Evaluator;
 use crate::hypergraph::{blocks_le, Hypergraph, Weights};
 use crate::mt19937::Mt19937;
-use crate::partitioner::{random_part, vile_part};
+use crate::partitioner::{ilp_part, random_part, vile_part};
 use crate::refiner::KWayFm;
 
 /// How each solution was made, for the trace.
@@ -14,6 +14,7 @@ pub enum Kind {
     Random,
     RandomVile,
     Vile,
+    Ilp,
 }
 
 #[derive(Clone, Debug)]
@@ -34,6 +35,7 @@ impl Kind {
             Kind::Random => format!("[initial_partitioning] {i} :: Random part cutcost = {cost}, balance_flag = {flag}"),
             Kind::RandomVile => format!("[initial_partitioning] {i} :: Random VILE part cutcost = {cost}, balance_flag = {flag}"),
             Kind::Vile => format!("[initial_partitioning] VILE part cutcost = {cost}, balance_flag = {flag}"),
+            Kind::Ilp => format!("[initial_partitioning] ILP part cutcost = {cost}, balance_flag = {flag}"),
         }
     }
 }
@@ -41,8 +43,10 @@ impl Kind {
 /// Why a stage stopped short of an answer.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Refused {
-    /// The graph is small enough that the reference also tries an exact (ILP) partition.
+    /// An exact (ILP) partition is needed and this build has no solver.
     NeedsIlp { num_vertices: usize },
+    /// The solver's optimum left a vertex in no block (a value not exactly 1.0).
+    IlpVertexUnassigned,
 }
 
 /// The parameters `InitialPartition` reads.
@@ -60,8 +64,10 @@ pub struct InitialParams {
 /// as many moves as there are vertices until after the vile start (whose line comes AFTER the
 /// refiner's reset lines). Kept: the cheapest solutions within bounds, ordered by (cost, order
 /// made), topped up with the cheapest of the rest. Trace lines go to `trace` in the reference's
-/// order. A graph small enough for the exact (ILP) start is refused before anything is printed
-/// past the opening line.
+/// order. A graph with at most `num_vertices_threshold_ilp` vertices also gets an exact start,
+/// from the cheapest solution within bounds (the first when none is). `partitioner_seed` is the
+/// partitioner's seed: each random start sets it, and it stays set.
+#[allow(clippy::too_many_arguments)]
 pub fn initial_partition(
     p: &InitialParams,
     ev: &Evaluator,
@@ -69,12 +75,10 @@ pub fn initial_partition(
     g: &Hypergraph,
     upper: &[Weights],
     lower: &[Weights],
+    partitioner_seed: &mut i32,
     trace: &mut Vec<String>,
 ) -> Result<InitialPartitions, Refused> {
     trace.push("[initial_partitioning] Running Initial Partitioning...".into());
-    if g.num_vertices() <= p.num_vertices_threshold_ilp {
-        return Err(Refused::NeedsIlp { num_vertices: g.num_vertices() });
-    }
     let mut gen = Mt19937::new(p.seed as u32);
     let mut solutions: Vec<Vec<usize>> = Vec::new();
     let mut tried = Vec::new();
@@ -90,6 +94,7 @@ pub fn initial_partition(
     for (kind, vile) in [(Kind::Random, false), (Kind::RandomVile, true)] {
         for i in 0..p.num_initial_random_solutions {
             let seed = (gen.next_u32() & i32::MAX as u32) as i32;
+            *partitioner_seed = seed;
             run(random_part(g, p.num_parts, upper, lower, seed, vile), fm, &mut tried, kind, i, &mut solutions);
             let &(k, i, cost, flag) = tried.last().expect("just tried");
             trace.push(k.line(i, cost, flag));
@@ -102,6 +107,23 @@ pub fn initial_partition(
     tried.push((Kind::Vile, 0, cost, blocks_le(&balance, upper)));
     solutions.push(vile_solution);
     trace.push(Kind::Vile.line(0, cost, tried.last().expect("just tried").3));
+    if g.num_vertices() <= p.num_vertices_threshold_ilp {
+        let mut start = 0;
+        let mut start_cost = f32::MAX;
+        for (id, t) in tried.iter().enumerate() {
+            if t.3 && t.2 < start_cost {
+                start = id;
+                start_cost = t.2;
+            }
+        }
+        let mut ilp_solution = solutions[start].clone();
+        ilp_part(g, p.num_parts, ev, upper, lower, *partitioner_seed, &mut ilp_solution, trace)?;
+        let (cost, balance) = ev.cut_evaluator(g, &ilp_solution);
+        let flag = blocks_le(&balance, upper);
+        tried.push((Kind::Ilp, 0, cost, flag));
+        solutions.push(ilp_solution);
+        trace.push(Kind::Ilp.line(0, cost, flag));
+    }
 
     let mut ids: Vec<usize> = (0..tried.len()).collect();
     ids.sort_by(|&x, &y| tried[x].2.partial_cmp(&tried[y].2).expect("finite cost").then(x.cmp(&y)));

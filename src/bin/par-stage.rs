@@ -3,8 +3,9 @@
 //!
 //! Input: one JSON object per line — `num_parts`, `balance`, `seed`, `hyperedges`,
 //! `vertex_weights`, `hyperedge_weights` (a `solution` field, if present, is ignored).
-//! Output, per call: `call N`, the trace lines (`[group] text`), then `result solved` or
-//! `result refused <why>` — a refused call's trace stops where the refused stage would start.
+//! Output, per call: `call N`, the trace lines (`[group] text`), then `result solved` with
+//! `solution b0,b1,…` (the block of each vertex) or `result refused <why>` — a refused call's
+//! trace stops where the refused stage would start.
 //!
 //! Usage: par-stage <calls.jsonl>
 
@@ -45,7 +46,10 @@ fn main() {
         let (result, trace) = multilevel_partition(&p, &g);
         trace.iter().for_each(|l| println!("{l}"));
         match result {
-            Ok(_) => println!("result solved"),
+            Ok(solution) => {
+                println!("result solved");
+                println!("solution {}", solution.iter().map(|b| b.to_string()).collect::<Vec<_>>().join(","));
+            }
             Err(r) => println!("result refused {r:?}"),
         }
     }
