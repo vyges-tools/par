@@ -14,10 +14,27 @@ cli = ["dep:serde_json"]
 # The exact (ILP) partition through the pinned solver library (Linux build). Without it the stages
 # that need an exact solve are refused.
 ilp = ["dep:vyges-ortools-lib"]
+# `vyges-mpl-par`: the macro placer's `run` with this partitioner splitting its large flat clusters.
+mpl = ["dep:vyges-mpl"]
 
 [dependencies]
 serde_json = { version = "1", optional = true }
 vyges-ortools-lib = { path = "../vyges-tools-ortools-lib", optional = true }
+vyges-mpl = { path = "../vyges-tools-mpl", optional = true }
+
+# The placer's own dependencies from the sibling checkouts, as it builds them. Patches are only
+# honored from the root manifest.
+[patch."https://github.com/vyges-tools/opendb.git"]
+vyges-opendb = { path = "../vyges-tools-opendb" }
+
+[patch."https://github.com/vyges-tools/opendb-lib.git"]
+vyges-opendb-lib = { path = "../vyges-tools-opendb-lib" }
+
+[patch."https://github.com/vyges-tools/loom"]
+vyges-loom = { path = "../vyges-tools-loom" }
+
+[patch."https://github.com/vyges-tools/layout"]
+vyges-layout = { path = "../vyges-tools-layout" }
 
 [lib]
 name = "vyges_par"
@@ -25,3 +42,7 @@ name = "vyges_par"
 [[bin]]
 name = "par-stage"
 required-features = ["cli"]
+
+[[bin]]
+name = "vyges-mpl-par"
+required-features = ["mpl"]
