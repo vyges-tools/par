@@ -45,7 +45,7 @@ let (blocks, trace) = multilevel_partition(&Params::simple(2, 1.0, 0), &g);
 
 | Feature | What it adds |
 |---|---|
-| `ilp` | the exact (ILP) stages, through `vyges-ortools-lib` (Linux x86_64). Without it a call that reaches one returns `Refused::NeedsIlp` instead of an approximation. |
+| `ilp` | the exact (ILP) stages, through `vyges-ortools-lib` (Linux x86_64 and arm64). Without it a call that reaches one returns `Refused::NeedsIlp` instead of an approximation. |
 | `cli` | `par-stage`, a developer tool that replays recorded calls (JSON lines) and prints each trace. Not installed or released. |
 
 With `ilp`, set `VYGES_ORTOOLS_PREBUILT_DIR` to the prebuilt solver bundle
