@@ -1,0 +1,77 @@
+# SPDX-License-Identifier: Apache-2.0
+# Build & test on every push to main and on pull requests (plus manual dispatch).
+#
+# Two jobs: the pure-Rust library (no solver), and the `ilp` build linked against the prebuilt
+# solver bundle — the build `vyges-mpl` ships.
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build-test:
+    name: build & test (no solver)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: vyges-tools-par
+    steps:
+      # ⚠️ Sibling layout even without `ilp`: Cargo.toml patches ortools-lib to the sibling path,
+      # and a patch whose path does not exist is a hard `failed to load source`.
+      - uses: actions/checkout@v7
+        with:
+          path: vyges-tools-par
+      - uses: actions/checkout@v7
+        with:
+          repository: vyges-tools/ortools-lib
+          path: vyges-tools-ortools-lib
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+      - name: Test
+        run: cargo test --verbose
+      - name: Test (with the stage tool)
+        run: cargo test --verbose --features cli
+      - name: Clippy
+        run: cargo clippy --all-targets --features cli -- -D warnings
+
+  ilp:
+    name: build & test (ilp, x86_64-linux)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: vyges-tools-par
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          path: vyges-tools-par
+      - uses: actions/checkout@v7
+        with:
+          repository: vyges-tools/ortools-lib
+          path: vyges-tools-ortools-lib
+      # The bundle built from the checked-out ortools-lib's inputs; no Bazel build here.
+      - name: Fetch the solver bundle
+        run: bash ../vyges-tools-ortools-lib/scripts/fetch-bundle.sh "$RUNNER_TEMP/ortools" >> "$GITHUB_ENV"
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Test
+        run: cargo test --verbose --features ilp,cli
+
+  lint:
+    name: fmt-free lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      # ⛔ NO `cargo fmt --check`: these crates are hand-formatted.
+      - name: No machine-specific paths in tracked files
+        run: |
+          if git grep -nE '/home/[a-z]+/|/Users/[a-z]+/' -- . ; then
+            echo "::error::a tracked file contains an absolute developer path"
+            exit 1
+          fi
+          echo "no machine-specific paths"
