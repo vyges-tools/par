@@ -1,6 +1,6 @@
 [package]
 name = "vyges-par"
-version = "0.1.45"
+version = "0.1.46"
 edition = "2021"
 description = "Hypergraph partitioning: multilevel coarsening, initial partitioning and refinement, with small exact ILP solves."
 license = "Apache-2.0"
