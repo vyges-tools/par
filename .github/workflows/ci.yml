@@ -17,7 +17,7 @@ permissions:
 jobs:
   build-test:
     name: build & test (no solver)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-${{ vars.VYGES_UBUNTU_VERSION || '24.04' }}
     defaults:
       run:
         working-directory: vyges-tools-par
@@ -43,7 +43,7 @@ jobs:
 
   ilp:
     name: build & test (ilp, x86_64-linux)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-${{ vars.VYGES_UBUNTU_VERSION || '24.04' }}
     defaults:
       run:
         working-directory: vyges-tools-par
@@ -64,7 +64,7 @@ jobs:
 
   lint:
     name: fmt-free lint
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-${{ vars.VYGES_UBUNTU_VERSION || '24.04' }}
     steps:
       - uses: actions/checkout@v7
       # ⛔ NO `cargo fmt --check`: these crates are hand-formatted.
