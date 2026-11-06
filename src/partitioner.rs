@@ -94,6 +94,7 @@ pub fn ilp_part(
         vertex_weights: g.all_vertex_weights(),
         upper,
         lower,
+        fixed_vertices: &fixed_vertices_map(g),
     };
     match ilp_partition_inst(&inst) {
         Ok(parts) => {
@@ -109,6 +110,16 @@ pub fn ilp_part(
         Err(IlpOutcome::Unavailable) => return Err(Refused::NeedsIlp { num_vertices: g.num_vertices() }),
     }
     Ok(())
+}
+
+/// `ILPPart`'s `fixed_vertices_map`: every vertex with a fixed block, in ascending vertex order
+/// (the reference's `std::map`). Upstream a2e4517768 (in the pin) fills it; at 27288f5 it was
+/// declared and passed but never filled, so the solve ignored fixed vertices.
+pub fn fixed_vertices_map(g: &Hypergraph) -> Vec<(usize, usize)> {
+    if !g.has_fixed_vertices() {
+        return Vec::new();
+    }
+    (0..g.num_vertices()).filter(|&v| g.fixed_attr(v) > -1).map(|v| (v, g.fixed_attr(v) as usize)).collect()
 }
 
 /// `VilePart`: free vertices sorted by (weight, id), dealt out round robin.
@@ -195,5 +206,35 @@ mod tests {
         let ev = Evaluator { num_parts: 2, e_wt_factors: vec![1.0], v_wt_factors: vec![1.0] };
         // order 1, 2, 3, 0
         assert_eq!(vile_part(&g, 2, &ev), vec![1, 0, 1, 0]);
+    }
+
+    /// The upstream gtest's graph (`TestILPFixedVertices.cpp`, a2e4517768): edges {0,1}, {2,3},
+    /// unit weights, vertices fixed to blocks 0, 1, 0, 1.
+    fn fixed_pairs(fixed: Vec<i32>) -> Hypergraph {
+        let edges = vec![vec![0, 1], vec![2, 3]];
+        Hypergraph::new(1, 1, &edges, vec![vec![1.0]; 4], vec![vec![1.0]; 2], fixed, vec![])
+    }
+
+    /// Upstream rule (`ILPPart`, a2e4517768): every vertex whose fixed attribute is > -1 enters
+    /// the map, in vertex order; a graph without fixed vertices gives an empty map.
+    #[test]
+    fn the_fixed_map_holds_every_fixed_vertex_in_vertex_order() {
+        assert_eq!(fixed_vertices_map(&fixed_pairs(vec![0, 1, 0, 1])), vec![(0, 0), (1, 1), (2, 0), (3, 1)]);
+        assert_eq!(fixed_vertices_map(&fixed_pairs(vec![-1, 1, -1, 0])), vec![(1, 1), (3, 0)]);
+        assert!(fixed_vertices_map(&fixed_pairs(vec![])).is_empty());
+    }
+
+    /// Upstream rule (`PartitionerTest.ILPRespectsFixedVertices`, a2e4517768): the exact solve
+    /// keeps every fixed vertex in its block even when that cuts both edges — without the rows the
+    /// optimum keeps {0,1} and {2,3} whole.
+    #[cfg(feature = "ilp")]
+    #[test]
+    fn the_exact_solve_keeps_fixed_vertices_in_their_blocks() {
+        let g = fixed_pairs(vec![0, 1, 0, 1]);
+        let ev = Evaluator { num_parts: 2, e_wt_factors: vec![1.0], v_wt_factors: vec![1.0] };
+        let bound = vec![vec![2.0]; 2];
+        let (mut solution, mut trace) = (vec![usize::MAX; 4], Vec::new());
+        ilp_part(&g, 2, &ev, &bound, &bound, 0, &mut solution, &mut trace).expect("solver linked");
+        assert_eq!(solution, vec![0, 1, 0, 1]);
     }
 }

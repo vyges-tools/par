@@ -25,9 +25,11 @@ pub struct IlpInstance<'a> {
     pub vertex_weights: &'a [Weights],
     pub upper: &'a [Weights],
     pub lower: &'a [Weights],
+    /// `fixed_vertices` (a `std::map<int, int>`, vertex to block): in ascending vertex order.
+    pub fixed_vertices: &'a [(usize, usize)],
 }
 
-/// `ILPPartitionInst` (no fixed vertices). Each vertex gets the first block whose variable is
+/// `ILPPartitionInst`. Each vertex gets the first block whose variable is
 /// EXACTLY 1.0 in the solution; -1 when none is.
 #[cfg(feature = "ilp")]
 pub fn ilp_partition_inst(inst: &IlpInstance) -> Result<Vec<i64>, IlpOutcome> {
@@ -59,7 +61,13 @@ pub fn ilp_partition_inst(inst: &IlpInstance) -> Result<Vec<i64>, IlpOutcome> {
             }
         }
     }
-    // (Fixed vertices would add their rows here.)
+    // Upstream rule (a2e4517768, in the pin; unchanged 4155ac31..a6e7f507): one row
+    // `1 <= x[block][v] <= 1` per fixed vertex, in the map's order, after the balance rows and
+    // before the one-block-per-vertex rows.
+    for &(v, block) in inst.fixed_vertices {
+        let row = solver.make_row_constraint(1.0, 1.0).map_err(fail)?;
+        solver.set_coefficient(row, x[block][v], 1.0).map_err(fail)?;
+    }
     for v in 0..num_vertices {
         let row = solver.make_row_constraint(1.0, 1.0).map_err(fail)?;
         for xi in &x {
