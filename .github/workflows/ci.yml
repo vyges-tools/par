@@ -57,6 +57,8 @@ jobs:
           path: vyges-tools-ortools-lib
       # The bundle built from the checked-out ortools-lib's inputs; no Bazel build here.
       - name: Fetch the solver bundle
+        env:
+          GH_TOKEN: ${{ github.token }}   # authenticated bundle download (fetch-bundle.sh)
         run: bash ../vyges-tools-ortools-lib/scripts/fetch-bundle.sh "$RUNNER_TEMP/ortools" >> "$GITHUB_ENV"
       - uses: dtolnay/rust-toolchain@stable
       - name: Test
