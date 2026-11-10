@@ -1,7 +1,5 @@
 # vyges-par
 
-**[Download Loom](https://vyges.com/products/vyges-cli/#install)** · install the free [Vyges CLI](https://vyges.com/products/vyges-cli/), then `vyges install loom`
-
 A deterministic **hypergraph partitioner** in Rust: multilevel coarsening, initial partitioning
 (random, vile and exact ILP starts), k-way FM, pairwise and greedy refinement, cut-overlay
 clustering and V-cycles.
