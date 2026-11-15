@@ -14,6 +14,11 @@ use std::io::{BufRead, BufReader};
 use vyges_par::multilevel::multilevel_partition;
 use vyges_par::{simple_hypergraph, Params};
 
+/// The binary allocates through mimalloc, as the reference allocates through the tcmalloc its
+/// Bazel build links (`malloc = @tcmalloc`); see Cargo.toml for the pin.
+#[global_allocator]
+static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
+
 fn main() {
     let path = std::env::args().nth(1).unwrap_or_else(|| {
         eprintln!("usage: par-stage <calls.jsonl>");

@@ -11,7 +11,7 @@ repository = "https://github.com/vyges-tools/par"
 [features]
 # `par-stage`: a developer tool that replays recorded partitioning calls (JSON lines) and prints
 # the trace. Not installed or released; this crate is a library.
-cli = ["dep:serde_json"]
+cli = ["dep:serde_json", "dep:mimalloc", "dep:libmimalloc-sys"]
 # The exact (ILP) partition through the pinned solver library (Linux x86_64 and arm64). Without it the
 # stages that need an exact solve are refused.
 ilp = ["dep:vyges-ortools-lib"]
@@ -19,6 +19,19 @@ ilp = ["dep:vyges-ortools-lib"]
 [dependencies]
 serde_json = { version = "1", optional = true }
 vyges-ortools-lib = { git = "https://github.com/vyges-tools/ortools-lib", branch = "main", optional = true }
+
+# The binary's global allocator. The reference build links tcmalloc for all of its code
+# (BUILD.bazel `malloc = @tcmalloc`), not the system allocator; mimalloc measured fastest and
+# smallest of tcmalloc / jemalloc / mimalloc on a like-for-like trial. Pinned exactly:
+# libmimalloc-sys 0.1.44 bundles mimalloc v2 by default (0.1.45 on default to v3).
+mimalloc = { version = "=0.1.48", default-features = false, optional = true }
+libmimalloc-sys = { version = "=0.1.44", default-features = false, optional = true }
+
+# On Linux the allocator also REPLACES malloc/free process-wide (`override`), so C++ code linked
+# into the binary allocates through it too, as the reference's statically linked tcmalloc does for
+# all of its code. Not on macOS, where the system zone allocator is left alone.
+[target.'cfg(target_os = "linux")'.dependencies]
+libmimalloc-sys = { version = "=0.1.44", default-features = false, features = ["override"], optional = true }
 
 # Local development against the sibling checkout. Patches are only honored from the root
 # manifest, so this is a no-op for downstream consumers pulling us by git.
@@ -35,3 +48,9 @@ required-features = ["cli"]
 [[example]]
 name = "seed_probe"
 required-features = ["cli"]
+
+# The reference is built -O3 with link-time optimisation (Bazel --config=release). LTO and one
+# codegen unit let calls inline across crates; by language rule neither changes a result.
+[profile.release]
+lto = "fat"
+codegen-units = 1
